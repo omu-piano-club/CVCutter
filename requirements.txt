@@ -1,0 +1,13 @@
+moviepy
+pydub
+openai-whisper
+torch
+torchaudio
+tqdm
+ultralytics
+opencv-python
+librosa
+scipy
+pyroomacoustics
+selenium
+undetected-chromedriver
