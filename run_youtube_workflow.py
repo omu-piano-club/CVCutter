@@ -210,9 +210,18 @@ def run_full_workflow(
         logger.info("\n【ステップ6】YouTubeへのアップロード")
         logger.info("-" * 80)
 
-        user_input = input("\nYouTubeへのアップロードを開始しますか？ (yes/no): ").strip().lower()
+        # In GUI mode, we assume yes if skip_upload is False,
+        # or we could add another argument 'auto_upload'.
+        # For now, let's just proceed or assume affirmative if running from function call.
+        # But to be safe for CLI usage, we check if sys.stdin.isatty()
 
-        if user_input in ['yes', 'y', 'はい']:
+        should_upload = True
+        if sys.stdin and sys.stdin.isatty():
+             user_input = input("\nYouTubeへのアップロードを開始しますか？ (yes/no): ").strip().lower()
+             if user_input not in ['yes', 'y', 'はい']:
+                 should_upload = False
+
+        if should_upload:
             try:
                 # video_dirではなく、実際の動画ファイルパスを使う
                 # final_mappingsから動画ファイルパスを取得して、一時的なメタデータを作成
