@@ -31,9 +31,10 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # Forms API設定
-FORMS_SCOPES = [
+SCOPES = [
     'https://www.googleapis.com/auth/forms.body.readonly',
-    'https://www.googleapis.com/auth/forms.responses.readonly'
+    'https://www.googleapis.com/auth/forms.responses.readonly',
+    'https://www.googleapis.com/auth/spreadsheets.readonly'
 ]
 CLIENT_SECRETS_FILE = Path(__file__).parent / "client_secrets.json"
 FORMS_TOKEN_PICKLE = Path(__file__).parent / "forms_token.pickle"
@@ -155,8 +156,20 @@ class FormResponseParser:
             reader = csv.reader(f)
             rows = list(reader)
 
+        return self._parse_rows(rows)
+
+    def _parse_rows(self, rows: List[List[str]]) -> List[Dict]:
+        """
+        行データ（ヘッダー含む）を解析して回答リストを作成
+
+        Args:
+            rows: 行データのリスト（最初の行はヘッダー）
+
+        Returns:
+            回答データのリスト
+        """
         if len(rows) < 2:
-            raise ValueError("CSVファイルにデータが含まれていません")
+            raise ValueError("データが含まれていません")
 
         headers = rows[0]
         data_rows = rows[1:]
@@ -178,49 +191,42 @@ class FormResponseParser:
         responses = []
         for i, row in enumerate(data_rows, 1):
             try:
+                # 安全な値取得関数
+                get_val = lambda idx: row[idx] if idx is not None and idx < len(row) else ""
+
                 response = {}
 
                 # タイムスタンプ
-                if col_indices["timestamp"] is not None:
-                    response["timestamp"] = row[col_indices["timestamp"]]
-                else:
-                    response["timestamp"] = ""
+                response["timestamp"] = get_val(col_indices["timestamp"])
 
                 # 名前（必須）
-                if col_indices["name"] is not None:
-                    response["name"] = row[col_indices["name"]].strip()
+                name = get_val(col_indices["name"]).strip()
+                if name:
+                    response["name"] = name
                 else:
                     logger.warning(f"行 {i}: 名前が見つかりません")
                     continue
 
                 # 氏名表示
-                if col_indices["display_name"] is not None:
-                    response["display_name"] = self._parse_display_name_value(
-                        row[col_indices["display_name"]]
-                    )
-                else:
-                    response["display_name"] = True  # デフォルト: 表示
+                response["display_name"] = self._parse_display_name_value(
+                    get_val(col_indices["display_name"])
+                )
 
                 # 曲名（必須）
-                if col_indices["piece_title"] is not None:
-                    response["piece_title"] = row[col_indices["piece_title"]].strip()
+                piece = get_val(col_indices["piece_title"]).strip()
+                if piece:
+                    response["piece_title"] = piece
                 else:
                     logger.warning(f"行 {i}: 曲名が見つかりません")
                     continue
 
                 # 公開設定
-                if col_indices["privacy"] is not None:
-                    response["privacy"] = self._parse_privacy_value(
-                        row[col_indices["privacy"]]
-                    )
-                else:
-                    response["privacy"] = "unlisted"  # デフォルト: 限定公開
+                response["privacy"] = self._parse_privacy_value(
+                    get_val(col_indices["privacy"])
+                )
 
                 # 追加の説明文
-                if col_indices["description_extra"] is not None:
-                    response["description_extra"] = row[col_indices["description_extra"]].strip()
-                else:
-                    response["description_extra"] = ""
+                response["description_extra"] = get_val(col_indices["description_extra"]).strip()
 
                 # 回答IDを付与
                 response["response_id"] = i
@@ -242,59 +248,65 @@ class FormResponseParser:
 
     def load_from_google_sheets(self, spreadsheet_id: str, range_name: str = "A:Z") -> List[Dict]:
         """
-        Google Sheets APIから回答を読み込み（オプション機能）
+        Google Sheets APIから回答を読み込み
 
         Args:
-            spreadsheet_id: スプレッドシートID
+            spreadsheet_id: スプレッドシートID（またはURL）
             range_name: 読み込む範囲（デフォルト: "A:Z"）
 
         Returns:
             回答データのリスト
         """
-        try:
-            from googleapiclient.discovery import build
-            from google.oauth2 import service_account
-        except ImportError:
-            raise ImportError(
-                "Google Sheets API機能を使用するには、以下をインストールしてください:\n"
-                "pip install google-api-python-client google-auth"
-            )
+        # URLからIDを抽出
+        if 'docs.google.com/spreadsheets' in spreadsheet_id:
+            try:
+                # /d/ID/edit... の形式を想定
+                parts = spreadsheet_id.split('/d/')
+                if len(parts) > 1:
+                    spreadsheet_id = parts[1].split('/')[0]
+                logger.info(f"URLからスプレッドシートIDを抽出しました: {spreadsheet_id}")
+            except Exception as e:
+                logger.warning(f"URLからのID抽出に失敗しました: {e}. そのまま使用します。")
 
         logger.info("Google Sheets APIから回答を取得しています...")
 
-        # 認証情報の読み込み（service_account.json）
-        creds = service_account.Credentials.from_service_account_file(
-            'service_account.json',
-            scopes=['https://www.googleapis.com/auth/spreadsheets.readonly']
-        )
+        # 認証（Sheets API v4）
+        service = self._authenticate_google_api('sheets', 'v4')
 
-        service = build('sheets', 'v4', credentials=creds)
-        sheet = service.spreadsheets()
+        try:
+            sheet = service.spreadsheets()
+            result = sheet.values().get(
+                spreadsheetId=spreadsheet_id,
+                range=range_name
+            ).execute()
 
-        result = sheet.values().get(
-            spreadsheetId=spreadsheet_id,
-            range=range_name
-        ).execute()
+            values = result.get('values', [])
 
-        values = result.get('values', [])
+            if not values:
+                raise ValueError("スプレッドシートにデータがありません")
 
-        if not values:
-            raise ValueError("スプレッドシートにデータがありません")
+            logger.info(f"{len(values)}行のデータを取得しました")
 
-        # CSVと同じ形式に変換してパース
-        # （実装の簡略化のため、一時CSVファイルに書き出す方法もあり）
-        logger.info(f"{len(values)}行のデータを取得しました")
+            # 取得したデータを解析
+            return self._parse_rows(values)
 
-        # この部分は実際のスプレッドシート構造に合わせて実装
-        # 今回はCSV優先なので簡易実装にとどめる
-        raise NotImplementedError("Google Sheets APIからの読み込みは未実装です。CSVエクスポートを使用してください。")
+        except HttpError as e:
+            if e.resp.status == 403:
+                logger.error("権限エラー: トークンが古いか、スプレッドシートの閲覧権限がありません。")
+                logger.error(f"forms_token.pickleを削除して再認証を試みてください。\n{FORMS_TOKEN_PICKLE}")
+            logger.error(f"Google Sheets APIエラー: {e}")
+            raise
 
-    def _authenticate_forms_api(self):
+    def _authenticate_google_api(self, service_name: str, version: str):
         """
-        Google Forms API用のOAuth 2.0認証
+        Google API用のOAuth 2.0認証
+
+        Args:
+            service_name: サービス名（'forms', 'sheets' など）
+            version: APIバージョン（'v1', 'v4' など）
 
         Returns:
-            Forms APIサービスオブジェクト
+            APIサービスオブジェクト
         """
         credentials = None
 
@@ -307,8 +319,13 @@ class FormResponseParser:
         if not credentials or not credentials.valid:
             if credentials and credentials.expired and credentials.refresh_token:
                 logger.info("アクセストークンを更新しています...")
-                credentials.refresh(Request())
-            else:
+                try:
+                    credentials.refresh(Request())
+                except Exception as e:
+                    logger.warning(f"トークン更新に失敗しました: {e}。再認証を試みます。")
+                    credentials = None
+
+            if not credentials:
                 if not CLIENT_SECRETS_FILE.exists():
                     raise FileNotFoundError(
                         f"client_secrets.jsonが見つかりません: {CLIENT_SECRETS_FILE}\n"
@@ -317,7 +334,7 @@ class FormResponseParser:
 
                 logger.info("初回認証を実行します。ブラウザが開きます...")
                 flow = InstalledAppFlow.from_client_secrets_file(
-                    str(CLIENT_SECRETS_FILE), FORMS_SCOPES
+                    str(CLIENT_SECRETS_FILE), SCOPES
                 )
                 credentials = flow.run_local_server(port=0)
 
@@ -326,7 +343,7 @@ class FormResponseParser:
                 pickle.dump(credentials, token)
             logger.info("認証情報を保存しました")
 
-        return build('forms', 'v1', credentials=credentials)
+        return build(service_name, version, credentials=credentials)
 
     def load_from_forms_api(self, form_id: Optional[str] = None) -> List[Dict]:
         """
@@ -359,7 +376,7 @@ class FormResponseParser:
         logger.info(f"フォームID: {form_id}")
 
         # Forms API認証
-        service = self._authenticate_forms_api()
+        service = self._authenticate_google_api('forms', 'v1')
 
         try:
             # フォーム構造を取得（質問IDの取得のため）
@@ -577,6 +594,12 @@ def main():
         action="store_true",
         help="Forms APIから直接回答を取得（推奨）"
     )
+    parser.add_argument(
+        "--sheet-id",
+        type=str,
+        default=None,
+        help="スプレッドシートIDまたはURL（Google Sheets APIから取得）"
+    )
 
     args = parser.parse_args()
 
@@ -594,6 +617,10 @@ def main():
         if args.use_api or args.form_id:
             responses = response_parser.load_from_forms_api(args.form_id)
 
+        # Sheets APIから取得
+        elif args.sheet_id:
+            responses = response_parser.load_from_google_sheets(args.sheet_id)
+
         # CSVから取得
         elif args.csv_file:
             responses = response_parser.load_from_csv(args.csv_file)
@@ -604,7 +631,7 @@ def main():
                 logger.info("form_config.jsonが見つかりました。Forms APIから回答を取得します。")
                 responses = response_parser.load_from_forms_api()
             else:
-                parser.error("CSVファイルまたは--use-apiオプションを指定してください")
+                parser.error("CSVファイルまたは--use-apiまたは--sheet-idオプションを指定してください")
 
         # JSONにエクスポート
         response_parser.export_to_json(args.output)
