@@ -48,8 +48,17 @@ logger = logging.getLogger(__name__)
 SCOPES = ['https://www.googleapis.com/auth/youtube.upload']
 API_SERVICE_NAME = 'youtube'
 API_VERSION = 'v3'
-CLIENT_SECRETS_FILE = Path(__file__).parent / "client_secrets.json"
-TOKEN_PICKLE_FILE = Path(__file__).parent / "token.pickle"
+def get_resource_path(relative_path):
+    if getattr(sys, 'frozen', False):
+        exe_dir = Path(sys.executable).parent
+        path = exe_dir / relative_path
+        if path.exists():
+            return path
+        return Path(sys._MEIPASS) / relative_path
+    return Path(__file__).parent.parent.parent / relative_path
+
+CLIENT_SECRETS_FILE = get_resource_path("client_secrets.json")
+TOKEN_PICKLE_FILE = get_resource_path("token.pickle")
 
 # クォータ設定
 DAILY_QUOTA_LIMIT = 10000  # 1日のクォータ上限
@@ -181,7 +190,7 @@ class QuotaManager:
         }
 
 
-def authenticate() -> object:
+def authenticate(client_secrets_path: Optional[Path] = None) -> object:
     """
     OAuth 2.0認証を実行し、YouTube APIサービスオブジェクトを返す
 
@@ -189,10 +198,12 @@ def authenticate() -> object:
         YouTubeサービスオブジェクト
     """
     credentials = None
+    secrets_file = client_secrets_path if client_secrets_path else CLIENT_SECRETS_FILE
+    token_file = secrets_file.parent / "token.pickle"
 
     # トークンファイルが存在する場合は読み込み
-    if TOKEN_PICKLE_FILE.exists():
-        with open(TOKEN_PICKLE_FILE, 'rb') as token:
+    if token_file.exists():
+        with open(token_file, 'rb') as token:
             credentials = pickle.load(token)
 
     # 認証情報が無効な場合は再認証
@@ -201,20 +212,20 @@ def authenticate() -> object:
             logger.info("アクセストークンを更新しています...")
             credentials.refresh(Request())
         else:
-            if not CLIENT_SECRETS_FILE.exists():
+            if not secrets_file.exists():
                 raise FileNotFoundError(
-                    f"client_secrets.jsonが見つかりません: {CLIENT_SECRETS_FILE}\n"
+                    f"client_secrets.jsonが見つかりません: {secrets_file}\n"
                     "Google Cloud Consoleから取得し、このファイルと同じディレクトリに配置してください。"
                 )
 
             logger.info("初回認証を実行します。ブラウザが開きます...")
             flow = InstalledAppFlow.from_client_secrets_file(
-                str(CLIENT_SECRETS_FILE), SCOPES
+                str(secrets_file), SCOPES
             )
             credentials = flow.run_local_server(port=0)
 
         # トークンを保存
-        with open(TOKEN_PICKLE_FILE, 'wb') as token:
+        with open(token_file, 'wb') as token:
             pickle.dump(credentials, token)
         logger.info("認証情報を保存しました")
 

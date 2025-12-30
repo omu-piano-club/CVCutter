@@ -36,12 +36,24 @@ SCOPES = [
 ]
 API_SERVICE_NAME = 'forms'
 API_VERSION = 'v1'
-CLIENT_SECRETS_FILE = Path(__file__).parent / "client_secrets.json"
-TOKEN_PICKLE_FILE = Path(__file__).parent / "forms_token.pickle"
-FORM_CONFIG_FILE = Path(__file__).parent / "form_config.json"
+def get_resource_path(relative_path):
+    """Get absolute path to resource, works for dev and for PyInstaller"""
+    if getattr(sys, 'frozen', False):
+        # If running in a bundle, the resource is in the same folder as the EXE
+        # but we also want to look in the EXE's directory, not just _MEIPASS
+        exe_dir = Path(sys.executable).parent
+        path = exe_dir / relative_path
+        if path.exists():
+            return path
+        return Path(sys._MEIPASS) / relative_path
+    return Path(__file__).parent.parent.parent / relative_path
+
+CLIENT_SECRETS_FILE = get_resource_path("client_secrets.json")
+TOKEN_PICKLE_FILE = get_resource_path("forms_token.pickle")
+FORM_CONFIG_FILE = get_resource_path("form_config.json")
 
 
-def authenticate_forms_api() -> object:
+def authenticate_forms_api(client_secrets_path: Optional[Path] = None) -> object:
     """
     Google Forms API用のOAuth 2.0認証
 
@@ -50,9 +62,12 @@ def authenticate_forms_api() -> object:
     """
     credentials = None
 
+    secrets_file = client_secrets_path if client_secrets_path else CLIENT_SECRETS_FILE
+    token_file = secrets_file.parent / "forms_token.pickle"
+
     # トークンファイルが存在する場合は読み込み
-    if TOKEN_PICKLE_FILE.exists():
-        with open(TOKEN_PICKLE_FILE, 'rb') as token:
+    if token_file.exists():
+        with open(token_file, 'rb') as token:
             credentials = pickle.load(token)
 
     # 認証情報が無効な場合は再認証
@@ -61,20 +76,20 @@ def authenticate_forms_api() -> object:
             logger.info("アクセストークンを更新しています...")
             credentials.refresh(Request())
         else:
-            if not CLIENT_SECRETS_FILE.exists():
+            if not secrets_file.exists():
                 raise FileNotFoundError(
-                    f"client_secrets.jsonが見つかりません: {CLIENT_SECRETS_FILE}\n"
+                    f"client_secrets.jsonが見つかりません: {secrets_file}\n"
                     "Google Cloud Consoleから取得し、このファイルと同じディレクトリに配置してください。"
                 )
 
             logger.info("初回認証を実行します。ブラウザが開きます...")
             flow = InstalledAppFlow.from_client_secrets_file(
-                str(CLIENT_SECRETS_FILE), SCOPES
+                str(secrets_file), SCOPES
             )
             credentials = flow.run_local_server(port=0)
 
         # トークンを保存
-        with open(TOKEN_PICKLE_FILE, 'wb') as token:
+        with open(token_file, 'wb') as token:
             pickle.dump(credentials, token)
         logger.info("認証情報を保存しました")
 

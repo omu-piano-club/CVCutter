@@ -38,7 +38,20 @@ def run_ffmpeg_with_progress(command, duration, progress_callback=None):
     if command[0] == 'ffmpeg':
         command[0] = ffmpeg_path
         
-    process = subprocess.Popen(command, stderr=subprocess.PIPE, universal_newlines=True, encoding='utf-8')
+    # Hide console window on Windows
+    startupinfo = None
+    if os.name == 'nt':
+        startupinfo = subprocess.STARTUPINFO()
+        startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+        startupinfo.wShowWindow = subprocess.SW_HIDE
+
+    process = subprocess.Popen(
+        command,
+        stderr=subprocess.PIPE,
+        universal_newlines=True,
+        encoding='utf-8',
+        startupinfo=startupinfo
+    )
     time_regex = re.compile(r"time=(\d{2}):(\d{2}):(\d{2})\.(\d{2})")
 
     # We still use tqdm for CLI output but also call the callback for GUI
