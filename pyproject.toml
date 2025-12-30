@@ -23,6 +23,7 @@ dependencies = [
     "google-api-python-client>=2.155.0",
     "customtkinter>=5.2.2",
     "pillow>=11.0.0",
+    "pyinstaller>=6.11.1",
 ]
 
 [build-system]
