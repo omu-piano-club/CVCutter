@@ -13,15 +13,15 @@ from pathlib import Path
 from typing import Optional
 
 # 各モジュールをインポート
-from pdf_parser import parse_concert_pdf
-from google_form_connector import FormResponseParser
-from video_mapper import (
+from .pdf_parser import parse_concert_pdf
+from .google_form_connector import FormResponseParser
+from .video_mapper import (
     get_video_files_sorted,
     map_program_to_videos,
     map_with_form_responses,
     generate_upload_metadata
 )
-from youtube_uploader import batch_upload
+from .youtube_uploader import batch_upload
 
 # ログ設定
 logging.basicConfig(

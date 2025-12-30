@@ -3,8 +3,8 @@ import re
 import subprocess
 import numpy as np
 from moviepy.editor import VideoFileClip, AudioFileClip
-from detect_performances import detect_performances_by_motion
-from sync_audio import find_audio_offset
+from .detect_performances import detect_performances_by_motion
+from .sync_audio import find_audio_offset
 from tqdm import tqdm
 import time
 
@@ -68,12 +68,12 @@ def process_pair(video_path, audio_path, config_overrides, progress_callback=Non
 
     # Ensure paths are strings
     video_path = str(video_path)
-    audio_path = str(audio_path)
+    audio_path = str(audio_path) if audio_path else None
 
     update_status(f"Processing: {os.path.basename(video_path)}")
     print(f"\n=======================================================")
     print(f"Processing Video: {video_path}")
-    print(f"Processing Audio: {audio_path}")
+    print(f"Processing Audio: {audio_path if audio_path else 'None (using video audio only)'}")
     print(f"=======================================================")
 
     config = {
@@ -84,6 +84,7 @@ def process_pair(video_path, audio_path, config_overrides, progress_callback=Non
         'video_audio_volume': 0.6,
         'mic_audio_volume': 1.5,
         'audio_sync_sample_rate': 22050,
+        'use_gpu': True,
         'detection_config': { 'max_seconds_to_process': None, 'min_duration_seconds': 30, 'show_video': False,
                               'mog2_threshold': 40, 'min_contour_area': 3000, 'left_zone_end_percent': 0.25,
                               'center_zone_end_percent': 0.55 }
@@ -102,45 +103,76 @@ def process_pair(video_path, audio_path, config_overrides, progress_callback=Non
     print(f"\nDetected {len(performance_segments)} performance segments.")
 
     # --- Step 2: Sync ---
-    update_status(f"Syncing audio for {os.path.basename(video_path)}...")
-    all_offsets = []
+    global_offset = 0
+    if config['mic_audio_path']:
+        update_status(f"Syncing audio for {os.path.basename(video_path)}...")
+        all_offsets = []
 
-    # We need to handle MoviePy not blocking the UI if possible, but here it runs in the thread
-    with VideoFileClip(config['video_path']) as video:
-        for i, (start, end) in enumerate(performance_segments):
-            needle_path = os.path.join(config['temp_dir'], f'needle_{i+1}.wav')
-            # Extract audio for sync
-            video.audio.subclip(start, end).write_audiofile(needle_path, fps=config['audio_sync_sample_rate'], logger=None)
+        # We need to handle MoviePy not blocking the UI if possible, but here it runs in the thread
+        with VideoFileClip(config['video_path']) as video:
+            for i, (start, end) in enumerate(performance_segments):
+                needle_path = os.path.join(config['temp_dir'], f'needle_{i+1}.wav')
+                # Extract audio for sync
+                video.audio.subclip(start, end).write_audiofile(needle_path, fps=config['audio_sync_sample_rate'], logger=None)
 
-            sync_result = find_audio_offset(config['mic_audio_path'], needle_path, config['audio_sync_sample_rate'])
-            if sync_result:
-                all_offsets.append(sync_result['offset_seconds'] - start)
+                sync_result = find_audio_offset(config['mic_audio_path'], needle_path, config['audio_sync_sample_rate'])
+                if sync_result:
+                    all_offsets.append(sync_result['offset_seconds'] - start)
 
-            # Simple progress update
-            if progress_callback:
-                progress_callback(i+1, len(performance_segments), f"Syncing segment {i+1}/{len(performance_segments)}")
+                # Simple progress update
+                if progress_callback:
+                    progress_callback(i+1, len(performance_segments), f"Syncing segment {i+1}/{len(performance_segments)}")
 
-    if not all_offsets:
-        print("Audio synchronization failed. Skipping to next pair.")
-        return
-    global_offset = get_consensus_offset(all_offsets)
-    print(f"\nFinal consensus global time offset: {global_offset:.4f} seconds")
+        if not all_offsets:
+            print("Audio synchronization failed. Falling back to video audio only.")
+            config['mic_audio_path'] = None
+        else:
+            global_offset = get_consensus_offset(all_offsets)
+            print(f"\nFinal consensus global time offset: {global_offset:.4f} seconds")
 
     # --- Step 3: Process with FFMPEG ---
     for i, (start_time, end_time) in enumerate(performance_segments):
-        mic_start = start_time + global_offset
         duration = end_time - start_time
-        if mic_start < 0: continue
-
         base_name = os.path.splitext(os.path.basename(video_path))[0]
         output_filename = os.path.join(config['output_dir'], f"{base_name}_performance_{i+1}.mp4")
 
         update_status(f"Encoding segment {i+1} of {os.path.basename(video_path)}...")
 
-        command = [ 'ffmpeg', '-y', '-ss', str(start_time), '-i', config['video_path'], '-ss', str(mic_start),
-                    '-i', config['mic_audio_path'], '-t', str(duration), '-filter_complex',
-                    f"[0:a]volume={config['video_audio_volume']}[a0];[1:a]volume={config['mic_audio_volume']}[a1];[a0][a1]amix=inputs=2[aout]",
-                    '-map', '0:v', '-map', '[aout]', '-vf', 'yadif', '-c:v', 'libx264', '-preset', 'medium',
-                    '-c:a', 'aac', '-b:a', '192k', output_filename ]
+        # Base command with input video
+        command = ['ffmpeg', '-y']
+        
+        # Check for GPU acceleration
+        vcodec = 'libx264'
+        extra_args = []
+        if config.get('use_gpu'):
+            # Try to detect NVIDIA GPU (most common for ffmpeg acceleration)
+            try:
+                subprocess.run(['nvidia-smi'], capture_output=True, check=True)
+                vcodec = 'h264_nvenc'
+                extra_args = ['-preset', 'p4', '-tune', 'hq']
+                print("Using NVIDIA GPU acceleration (h264_nvenc)")
+            except (subprocess.CalledProcessError, FileNotFoundError):
+                pass
+
+        if config['mic_audio_path']:
+            mic_start = start_time + global_offset
+            if mic_start < 0:
+                print(f"Warning: Mic start time {mic_start} is negative for segment {i+1}. Skipping sync for this segment.")
+                # Fallback for this segment
+                command += ['-ss', str(start_time), '-i', config['video_path'], '-t', str(duration),
+                            '-map', '0:v', '-map', '0:a', '-vf', 'yadif', '-c:v', vcodec] + extra_args + \
+                           ['-c:a', 'aac', '-b:a', '192k', output_filename]
+            else:
+                command += ['-ss', str(start_time), '-i', config['video_path'],
+                            '-ss', str(mic_start), '-i', config['mic_audio_path'],
+                            '-t', str(duration), '-filter_complex',
+                            f"[0:a]volume={config['video_audio_volume']}[a0];[1:a]volume={config['mic_audio_volume']}[a1];[a0][a1]amix=inputs=2[aout]",
+                            '-map', '0:v', '-map', '[aout]', '-vf', 'yadif', '-c:v', vcodec] + extra_args + \
+                           ['-c:a', 'aac', '-b:a', '192k', output_filename]
+        else:
+            # Video audio only
+            command += ['-ss', str(start_time), '-i', config['video_path'], '-t', str(duration),
+                        '-map', '0:v', '-map', '0:a', '-vf', 'yadif', '-c:v', vcodec] + extra_args + \
+                       ['-c:a', 'aac', '-b:a', '192k', output_filename]
 
         run_ffmpeg_with_progress(command, duration, progress_callback)
