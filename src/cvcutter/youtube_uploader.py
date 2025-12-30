@@ -232,7 +232,7 @@ def authenticate(client_secrets_path: Optional[Path] = None) -> object:
         logger.info("認証情報を保存しました")
 
     # Disable discovery cache to avoid errors in frozen environments
-    return build(API_SERVICE_NAME, API_VERSION, credentials=credentials, static_discovery=False)
+    return build(API_SERVICE_NAME, API_VERSION, credentials=credentials, static_discovery=False, requestBuilder=None)
 
 
 def get_video_files_sorted_by_time(directory: Path) -> List[Path]:

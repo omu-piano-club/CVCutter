@@ -367,8 +367,14 @@ YouTubeへのアップロードとフォーム連携には、ご自身でAPIキ�
     def _google_login(self, target):
         secrets = self.secrets_var.get()
         if not secrets or not os.path.exists(secrets):
-            messagebox.showerror("エラー", "Client Secrets JSONファイルが見つかりません。設定画面で正しいファイルを指定してください。")
-            return
+            # Fallback to current directory
+            alt_secrets = Path(sys.executable).parent / "client_secrets.json" if getattr(sys, 'frozen', False) else Path("client_secrets.json")
+            if alt_secrets.exists():
+                secrets = str(alt_secrets)
+                self.secrets_var.set(secrets)
+            else:
+                messagebox.showerror("エラー", "Client Secrets JSONファイルが見つかりません。設定画面で正しいファイルを指定してください。")
+                return
         
         def task():
             try:
