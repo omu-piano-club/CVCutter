@@ -97,24 +97,34 @@ def parse_pdf_with_gemini(pdf_path: Path, prompt: str = GEMINI_PROMPT) -> Option
     # Gemini CLIが利用可能か確認
     if not check_gemini_cli():
         raise RuntimeError(
-            "Gemini CLIが見つかりません。\n"
-            "以下のコマンドでインストールしてください：\n"
-            "npm install -g @google/generative-ai-cli\n"
-            "または\n"
-            "pip install google-generativeai"
+            "Gemini (AI) の実行環境が見つかりません。\n"
+            "「設定」タブから「Gemini ログイン」を実行して認証を完了させてください。"
         )
 
     logger.info(f"PDFを解析しています: {pdf_path}")
 
     try:
-        # Gemini CLIを実行
-        # 形式: gemini "プロンプト" --file path/to/file.pdf
-        cmd = [
-            "gemini",
-            prompt,
-            "--file", str(pdf_path)
-        ]
+        # 同梱された Node.js と gemini-cli を使用
+        if getattr(sys, 'frozen', False):
+            base_path = Path(sys._MEIPASS)
+        else:
+            base_path = Path(__file__).parent.parent.parent
+        
+        node_exe = base_path / "node-v24.12.0-win-x64" / "node.exe"
+        gemini_js = base_path / "node-v24.12.0-win-x64" / "node_modules" / "@google" / "gemini-cli" / "bundle" / "gemini.js"
+        
+        if not node_exe.exists():
+            node_exe = Path(sys.executable).parent / "node-v24.12.0-win-x64" / "node.exe"
+            gemini_js = Path(sys.executable).parent / "node-v24.12.0-win-x64" / "node_modules" / "@google" / "gemini-cli" / "bundle" / "gemini.js"
 
+        cmd = [
+            str(node_exe),
+            str(gemini_js),
+            "-p",
+            prompt,
+            "--file",
+            str(pdf_path)
+        ]
         logger.debug(f"実行コマンド: {' '.join(cmd)}")
 
         result = subprocess.run(

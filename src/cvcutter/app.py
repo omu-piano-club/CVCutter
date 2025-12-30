@@ -1,4 +1,5 @@
 import tkinter as tk
+import subprocess
 from tkinter import filedialog, messagebox
 import customtkinter as ctk
 from PIL import Image
@@ -265,6 +266,20 @@ class ConcertVideoApp(ctk.CTk):
             ("GPUアクセラレーション", "processing", "use_gpu", "bool")
         ])
 
+        # Gemini AI Auth
+        gemini_frame = ctk.CTkFrame(tab)
+        gemini_frame.pack(fill=tk.X, padx=10, pady=10)
+        ctk.CTkLabel(gemini_frame, text="Gemini AI 設定", font=ctk.CTkFont(weight="bold")).pack(pady=5)
+        
+        row = ctk.CTkFrame(gemini_frame, fg_color="transparent")
+        row.pack(fill=tk.X, padx=5, pady=2)
+        ctk.CTkLabel(row, text="AI紐付けを使用:", width=150, anchor="w").pack(side=tk.LEFT)
+        self.use_gemini_var = ctk.BooleanVar(value=self.config['workflow']['use_gemini'])
+        ctk.CTkCheckBox(row, text="", variable=self.use_gemini_var).pack(side=tk.LEFT)
+        
+        ctk.CTkButton(gemini_frame, text="Gemini ログイン (ブラウザが開きます)",
+                      command=self._gemini_login).pack(pady=10)
+
         ctk.CTkButton(tab, text="設定をすべて保存", command=self._save_settings).pack(pady=20)
 
     def _add_setting_group(self, parent, title, items):
@@ -405,6 +420,35 @@ YouTubeへのアップロードとフォーム連携には、ご自身でAPIキ�
         
         threading.Thread(target=task).start()
 
+    def _gemini_login(self):
+        def task():
+            try:
+                print("Gemini 認証を開始します...")
+                # 同梱された Node.js と gemini-cli を使用
+                if getattr(sys, 'frozen', False):
+                    base_path = Path(sys._MEIPASS)
+                else:
+                    base_path = Path(__file__).parent.parent.parent
+                
+                node_exe = base_path / "node-v24.12.0-win-x64" / "node.exe"
+                gemini_js = base_path / "node-v24.12.0-win-x64" / "node_modules" / "@google" / "gemini-cli" / "bundle" / "gemini.js"
+                
+                if not node_exe.exists():
+                    # EXE実行時のパス解決（実行ファイルと同じ階層にある場合も考慮）
+                    node_exe = Path(sys.executable).parent / "node-v24.12.0-win-x64" / "node.exe"
+                    gemini_js = Path(sys.executable).parent / "node-v24.12.0-win-x64" / "node_modules" / "@google" / "gemini-cli" / "bundle" / "gemini.js"
+
+                print(f"Using node: {node_exe}")
+                # /chat exit で認証チェックとログインのみ行う
+                subprocess.run([str(node_exe), str(gemini_js), "/chat", "exit"], check=True, capture_output=True, text=True)
+                
+                print("Gemini 認証プロセスが完了しました。")
+                self.after(0, lambda: messagebox.showinfo("成功", "Gemini の認証が完了しました。"))
+            except Exception as e:
+                print(f"Gemini 認証エラー: {e}")
+                self.after(0, lambda err=e: messagebox.showerror("エラー", f"Gemini 認証に失敗しました。\n{err}"))
+        threading.Thread(target=task).start()
+
     def _save_settings(self):
         for (section, key), var in self.setting_vars.items():
             val = var.get()
@@ -414,6 +458,10 @@ YouTubeへのアップロードとフォーム連携には、ご自身でAPIキ�
             elif isinstance(orig, int): val = int(val)
             elif isinstance(orig, float): val = float(val)
             self.config_manager.set(section, key, val)
+        
+        # Save explicit vars
+        self.config_manager.set('workflow', 'use_gemini', bool(self.use_gemini_var.get()))
+        
         messagebox.showinfo("Settings", "Settings saved successfully.")
 
     def _create_form(self):

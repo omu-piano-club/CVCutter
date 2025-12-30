@@ -1,8 +1,6 @@
 import librosa
-import librosa.display
 import numpy as np
 import os
-import matplotlib.pyplot as plt
 import argparse
 from scipy.signal import correlate
 
@@ -89,14 +87,17 @@ def plot_verification(haystack_path, needle_path, sr, offset_seconds):
     """
     print("一致検証のため、波形プロットを生成しています...")
     try:
+        import matplotlib.pyplot as plt
+        import librosa.display
+        
         needle_audio, _ = librosa.load(needle_path, sr=sr)
         duration_seconds = librosa.get_duration(y=needle_audio, sr=sr)
         
         # オフセットとデュレーションを使って、haystackの該当部分を読み込む
         haystack_segment, _ = librosa.load(
-            haystack_path, 
-            sr=sr, 
-            offset=offset_seconds, 
+            haystack_path,
+            sr=sr,
+            offset=offset_seconds,
             duration=duration_seconds
         )
         
@@ -111,6 +112,8 @@ def plot_verification(haystack_path, needle_path, sr, offset_seconds):
         print("プロットを表示します。ウィンドウを閉じるとプログラムが終了します。")
         plt.show()
 
+    except ImportError:
+        print("matplotlib がインストールされていないため、プロットをスキップします。")
     except Exception as e:
         print(f"プロットの生成に失敗しました: {e}")
 
