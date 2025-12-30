@@ -1,10 +1,10 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 """
-PDF解析スクリプト（Gemini CLI使用）
+PDF解析スクリプト（Gemini API使用）
 
 コンサートパンフレットPDFから演奏プログラム情報を抽出します。
-- Gemini CLIを使用してPDFを解析
+- Gemini API (Python SDK) を使用してPDFを解析
 - 演奏順序、演奏者名、曲名を構造化データとして出力
 """
 
@@ -22,7 +22,7 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# Gemini APIのプロンプト
+# Gemini API のプロンプト
 GEMINI_PROMPT = """
 このPDFはピアノコンサートのパンフレットです。
 演奏プログラムの情報を抽出し、正確なJSON形式で出力してください。
@@ -185,11 +185,11 @@ def parse_concert_pdf(pdf_path: Path, output_json: Optional[Path] = None) -> Dic
     logger.info("PDF解析開始")
     logger.info("=" * 60)
 
-    # Gemini CLIでPDFを解析
+    # Gemini API で PDF を解析
     gemini_output = parse_pdf_with_gemini(pdf_path)
 
-    # JSON部分を抽出
-    logger.info("Gemini CLIの出力からJSONを抽出しています...")
+    # JSON 部分を抽出
+    logger.info("Gemini の出力から JSON を抽出しています...")
     program_data = extract_json_from_output(gemini_output)
 
     # データ検証

@@ -99,7 +99,7 @@ def authenticate_forms_api(client_secrets_path: Optional[Path] = None) -> object
 def create_concert_form(
     service,
     form_title: str = "コンサート動画アップロード 演奏者情報フォーム",
-    form_description: str = "ご自身の演奏動画をYouTubeにアップロードするための情報を入力してください。"
+    form_description: str = "演奏動画を希望する方は以下のフォームにご回答お願いします。Youtubeに投稿します。"
 ) -> Dict:
     """
     コンサート動画用のGoogleフォームを作成
