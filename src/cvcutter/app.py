@@ -232,7 +232,14 @@ class ConcertVideoApp(ctk.CTk):
         ctk.CTkEntry(row, textvariable=self.secrets_var, width=300).pack(side=tk.LEFT, fill=tk.X, expand=True)
         ctk.CTkButton(row, text="参照", width=60, command=lambda: self._browse_file(self.secrets_var)).pack(side=tk.LEFT, padx=5)
         
-        ctk.CTkButton(auth_frame, text="Google ログイン (認証実行)", command=self._google_login).pack(pady=10)
+        auth_btn_frame = ctk.CTkFrame(auth_frame, fg_color="transparent")
+        auth_btn_frame.pack(pady=10)
+        
+        self.btn_auth_forms = ctk.CTkButton(auth_btn_frame, text="Google フォーム認証", command=lambda: self._google_login("forms"))
+        self.btn_auth_forms.pack(side=tk.LEFT, padx=5)
+        
+        self.btn_auth_youtube = ctk.CTkButton(auth_btn_frame, text="YouTube アップロード認証", command=lambda: self._google_login("youtube"))
+        self.btn_auth_youtube.pack(side=tk.LEFT, padx=5)
 
         # Paths
         self._add_setting_group(tab, "ディレクトリ設定", [
@@ -289,26 +296,33 @@ class ConcertVideoApp(ctk.CTk):
         self.tabs["help"] = tab
         
         help_text = """
-【初期設定ガイド】
-1. Google Cloud Console でプロジェクトを作成し、Google Forms API と YouTube Data API v3 を有効にします。
-2. 「認証情報」から OAuth 2.0 クライアント ID (デスクトップアプリ) を作成し、JSONファイルをダウンロードします。
-3. 設定画面の「Client Secrets JSON」でダウンロードしたファイルを指定します。
-4. 「Google ログイン」ボタンを押し、ブラウザで認証を完了させます。
+【1. Google Cloud Console での準備】
+YouTubeへのアップロードとフォーム連携には、ご自身でAPIキーを取得する必要があります（無料）。
 
-【基本的な使い方】
-1. 動画処理:
-   - 編集したいビデオファイルを選択します。MTSファイルなどが分割されている場合は、複数選択して追加してください。
-   - 外部マイク音声がある場合は追加します。ない場合はビデオの音声が使用されます。
-   - 「処理を開始」を押すと、自動で演奏区間の切り出しと合成が行われます。
+1. Google Cloud Console (https://console.cloud.google.com/) にアクセスします。
+2. 新しいプロジェクトを作成します。
+3. 「APIとサービス」>「ライブラリ」から以下を検索し、有効化します：
+   - YouTube Data API v3
+   - Google Forms API
+4. 「OAuth 同意画面」で「外部」を選択し、必須項目を埋めて作成します。
+   ※「テストユーザー」にご自身のGoogleアカウント（Gmailアドレス）を必ず追加してください。
+5. 「認証情報」>「認証情報を作成」>「OAuth クライアント ID」を選択します。
+   - アプリケーションの種類: 「デスクトップ アプリ」
+   - 名前: 任意（例: CVCutter）
+6. 作成後、表示されるリストの右側にあるダウンロードボタン（↓）を押し、JSONファイルを保存します。
 
-2. プレビュー & 紐付け:
-   - 演奏会のプログラムPDFを選択します。
-   - GoogleフォームのIDを入力します。
-   - 「マッピングを生成」を押すと、AIが動画とプログラム情報を自動で紐付けます。
+【2. ソフトでの設定】
+1. 「設定」タブを開き、「Client Secrets JSON」の「参照」ボタンから、先ほど保存したJSONファイルを選択します。
+2. 「Google ログイン」ボタンを押すとブラウザが開くので、ログインと許可を完了させてください。
+   ※「このアプリは Google で確認されていません」と出た場合は「詳細」>「CVCutter（安全ではないページ）に移動」を押してください。
 
-3. アップロード:
-   - 内容を確認し、「ワークフローを開始」を押すとYouTubeへのアップロードが始まります。
-   - YouTube APIの制限により、1日あたり約6本までアップロード可能です。
+【3. 基本的な使い方】
+1. 「動画処理」:
+   ビデオ（分割されている場合は複数選択）とマイク音声（任意）を選び、「処理を開始」します。
+2. 「プレビュー & 紐付け」:
+   プログラムPDFとフォームIDを入力し、「マッピングを生成」して内容を確認します。
+3. 「アップロード」:
+   「ワークフローを開始」でYouTubeへ投稿されます。
         """
         
         label = ctk.CTkLabel(tab, text=help_text, justify=tk.LEFT, font=ctk.CTkFont(size=13))
@@ -350,25 +364,28 @@ class ConcertVideoApp(ctk.CTk):
         d = filedialog.askdirectory()
         if d: var.set(d)
 
-    def _google_login(self):
+    def _google_login(self, target):
         secrets = self.secrets_var.get()
-        if not os.path.exists(secrets):
-            messagebox.showerror("エラー", "Client Secrets JSONファイルが見つかりません。")
+        if not secrets or not os.path.exists(secrets):
+            messagebox.showerror("エラー", "Client Secrets JSONファイルが見つかりません。設定画面で正しいファイルを指定してください。")
             return
         
         def task():
             try:
-                print("Google認証を開始します。ブラウザを確認してください...")
-                # Try Forms API auth
-                authenticate_forms_api(client_secrets_path=Path(secrets))
-                # Try YouTube API auth
-                from .youtube_uploader import authenticate
-                authenticate(client_secrets_path=Path(secrets))
-                print("認証が完了しました！")
-                messagebox.showinfo("成功", "Google認証に成功しました。")
+                if target == "forms":
+                    print("Google フォーム認証を開始します。ブラウザを確認してください...")
+                    authenticate_forms_api(client_secrets_path=Path(secrets))
+                    print("Google フォームの認証が完了しました！")
+                    self.after(0, lambda: messagebox.showinfo("成功", "Google フォームの認証に成功しました。"))
+                else:
+                    print("YouTube アップロード認証を開始します。ブラウザを確認してください...")
+                    from .youtube_uploader import authenticate
+                    authenticate(client_secrets_path=Path(secrets))
+                    print("YouTube アップロードの認証が完了しました！")
+                    self.after(0, lambda: messagebox.showinfo("成功", "YouTube アップロードの認証に成功しました。"))
             except Exception as e:
-                print(f"認証エラー: {e}")
-                messagebox.showerror("エラー", f"認証に失敗しました: {e}")
+                print(f"認証エラー ({target}): {e}")
+                self.after(0, lambda: messagebox.showerror("エラー", f"認証に失敗しました: {e}"))
         
         threading.Thread(target=task).start()
 
@@ -515,15 +532,16 @@ class ConcertVideoApp(ctk.CTk):
             
         metadata_path = Path(self.config['paths']['output_dir']) / "upload_metadata.json"
         if metadata_path.exists():
-            with open(metadata_path, 'r', encoding='utf-8') as f:
-                data = json.load(f)
-                for i, v in enumerate(data.get('videos', [])):
-                    frame = ctk.CTkFrame(self.upload_result_area)
-                    frame.pack(fill=tk.X, padx=5, pady=2)
-                    ctk.CTkLabel(frame, text=f"{i+1}. {v['title']}", font=ctk.CTkFont(weight="bold")).pack(side=tk.LEFT, padx=10)
-                    # Video ID would be in upload_state.json if actually uploaded
-
-        threading.Thread(target=task).start()
+            try:
+                with open(metadata_path, 'r', encoding='utf-8') as f:
+                    data = json.load(f)
+                    for i, v in enumerate(data.get('videos', [])):
+                        frame = ctk.CTkFrame(self.upload_result_area)
+                        frame.pack(fill=tk.X, padx=5, pady=2)
+                        ctk.CTkLabel(frame, text=f"{i+1}. {v['title']}", font=ctk.CTkFont(weight="bold")).pack(side=tk.LEFT, padx=10)
+                        ctk.CTkLabel(frame, text=f"状態: {v.get('privacy_status', '不明')}", text_color="gray").pack(side=tk.RIGHT, padx=10)
+            except Exception as e:
+                print(f"結果表示エラー: {e}")
 
 def main():
     app = ConcertVideoApp()

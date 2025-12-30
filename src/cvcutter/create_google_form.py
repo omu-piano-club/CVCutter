@@ -23,9 +23,14 @@ from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
 
 # ログ設定
+log_handlers = []
+if sys.stdout is not None:
+    log_handlers.append(logging.StreamHandler(sys.stdout))
+
 logging.basicConfig(
     level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    handlers=log_handlers
 )
 logger = logging.getLogger(__name__)
 
@@ -93,7 +98,8 @@ def authenticate_forms_api(client_secrets_path: Optional[Path] = None) -> object
             pickle.dump(credentials, token)
         logger.info("認証情報を保存しました")
 
-    return build(API_SERVICE_NAME, API_VERSION, credentials=credentials)
+    # Disable discovery cache to avoid errors in frozen environments
+    return build(API_SERVICE_NAME, API_VERSION, credentials=credentials, static_discovery=False)
 
 
 def create_concert_form(

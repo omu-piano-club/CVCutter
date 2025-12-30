@@ -34,13 +34,15 @@ LOG_DIR = Path(__file__).parent / "logs"
 LOG_DIR.mkdir(exist_ok=True)
 LOG_FILE = LOG_DIR / "youtube_upload.log"
 
+# Configure logging carefully for frozen environments
+log_handlers = [logging.FileHandler(LOG_FILE, encoding='utf-8')]
+if sys.stdout is not None:
+    log_handlers.append(logging.StreamHandler(sys.stdout))
+
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    handlers=[
-        logging.FileHandler(LOG_FILE, encoding='utf-8'),
-        logging.StreamHandler(sys.stdout)
-    ]
+    handlers=log_handlers
 )
 logger = logging.getLogger(__name__)
 
@@ -229,7 +231,8 @@ def authenticate(client_secrets_path: Optional[Path] = None) -> object:
             pickle.dump(credentials, token)
         logger.info("認証情報を保存しました")
 
-    return build(API_SERVICE_NAME, API_VERSION, credentials=credentials)
+    # Disable discovery cache to avoid errors in frozen environments
+    return build(API_SERVICE_NAME, API_VERSION, credentials=credentials, static_discovery=False)
 
 
 def get_video_files_sorted_by_time(directory: Path) -> List[Path]:
