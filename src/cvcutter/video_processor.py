@@ -1,12 +1,19 @@
 import os
 import re
 import subprocess
+import shutil
+import imageio_ffmpeg
 import numpy as np
-from moviepy.editor import VideoFileClip, AudioFileClip
+from pathlib import Path
+try:
+    from moviepy.editor import VideoFileClip, AudioFileClip
+except ImportError:
+    from moviepy import VideoFileClip, AudioFileClip
 from .detect_performances import detect_performances_by_motion
 from .sync_audio import find_audio_offset
 from tqdm import tqdm
 import time
+from .video_utils import concatenate_videos, get_gpu_args
 
 # --- Core Logic Functions (from previous version) ---
 
@@ -27,6 +34,10 @@ def run_ffmpeg_with_progress(command, duration, progress_callback=None):
     Executes FFMPEG with progress monitoring.
     progress_callback: function(current_time, total_duration, message)
     """
+    ffmpeg_path = imageio_ffmpeg.get_ffmpeg_exe()
+    if command[0] == 'ffmpeg':
+        command[0] = ffmpeg_path
+        
     process = subprocess.Popen(command, stderr=subprocess.PIPE, universal_newlines=True, encoding='utf-8')
     time_regex = re.compile(r"time=(\d{2}):(\d{2}):(\d{2})\.(\d{2})")
 
@@ -52,9 +63,10 @@ def run_ffmpeg_with_progress(command, duration, progress_callback=None):
         return False
     return True
 
-def process_pair(video_path, audio_path, config_overrides, progress_callback=None):
+def process_pair(video_paths, audio_path, config_overrides, progress_callback=None):
     """
     Main processing logic for a single video/audio pair.
+    video_paths can be a single string or a list of strings (for concatenated segments).
 
     progress_callback: function(current_value, max_value, message) or similar
                        Here we adapt it to update status text.
@@ -67,8 +79,24 @@ def process_pair(video_path, audio_path, config_overrides, progress_callback=Non
             print(text)
 
     # Ensure paths are strings
-    video_path = str(video_path)
+    if isinstance(video_paths, (str, Path)):
+        video_paths = [str(video_paths)]
+    else:
+        video_paths = [str(p) for p in video_paths]
+    
     audio_path = str(audio_path) if audio_path else None
+
+    # Handle concatenation if multiple videos provided
+    if len(video_paths) > 1:
+        update_status("Concatenating video segments...")
+        concat_video_path = os.path.join(config_overrides.get('temp_dir', 'temp'), "concatenated_input.mp4")
+        if not concatenate_videos(video_paths, concat_video_path):
+            print("Failed to concatenate videos. Using only the first one.")
+            video_path = video_paths[0]
+        else:
+            video_path = concat_video_path
+    else:
+        video_path = video_paths[0]
 
     update_status(f"Processing: {os.path.basename(video_path)}")
     print(f"\n=======================================================")
@@ -142,17 +170,10 @@ def process_pair(video_path, audio_path, config_overrides, progress_callback=Non
         command = ['ffmpeg', '-y']
         
         # Check for GPU acceleration
-        vcodec = 'libx264'
-        extra_args = []
-        if config.get('use_gpu'):
-            # Try to detect NVIDIA GPU (most common for ffmpeg acceleration)
-            try:
-                subprocess.run(['nvidia-smi'], capture_output=True, check=True)
-                vcodec = 'h264_nvenc'
-                extra_args = ['-preset', 'p4', '-tune', 'hq']
-                print("Using NVIDIA GPU acceleration (h264_nvenc)")
-            except (subprocess.CalledProcessError, FileNotFoundError):
-                pass
+        gpu_args = get_gpu_args() if config.get('use_gpu') else ['-c:v', 'libx264', '-preset', 'medium']
+        vcodec_idx = gpu_args.index('-c:v') + 1
+        vcodec = gpu_args[vcodec_idx]
+        extra_args = gpu_args[vcodec_idx+1:]
 
         if config['mic_audio_path']:
             mic_start = start_time + global_offset

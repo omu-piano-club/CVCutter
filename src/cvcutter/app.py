@@ -135,7 +135,7 @@ class ConcertVideoApp(ctk.CTk):
         v_frame = ctk.CTkFrame(sel_frame)
         v_frame.grid(row=0, column=0, padx=10, pady=10, sticky="nsew")
         ctk.CTkLabel(v_frame, text="Video Files", font=ctk.CTkFont(weight="bold")).pack(pady=5)
-        self.v_list = tk.Listbox(v_frame, bg="#2b2b2b", fg="white", borderwidth=0, highlightthickness=0)
+        self.v_list = tk.Listbox(v_frame, bg="#2b2b2b", fg="white", borderwidth=0, highlightthickness=0, selectmode=tk.MULTIPLE)
         self.v_list.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
         ctk.CTkButton(v_frame, text="Add Videos", command=self._add_videos).pack(pady=5)
 
@@ -274,12 +274,13 @@ class ConcertVideoApp(ctk.CTk):
         v_sel = self.v_list.curselection()
         a_sel = self.a_list.curselection()
         
-        v_path = self.v_list.get(v_sel[0]) if v_sel else None
+        v_paths = [self.v_list.get(i) for i in v_sel]
         a_path = self.a_list.get(a_sel[0]) if a_sel else None
 
-        if v_path:
-            self.queue_data.append((v_path, a_path))
-            self.q_list.insert(tk.END, f"{os.path.basename(v_path)} + {'Mic Audio' if a_path else 'Video Audio Only'}")
+        if v_paths:
+            self.queue_data.append((v_paths, a_path))
+            v_names = ", ".join([os.path.basename(p) for p in v_paths])
+            self.q_list.insert(tk.END, f"{v_names} + {'Mic Audio' if a_path else 'Video Audio Only'}")
         else:
             messagebox.showwarning("Selection", "Please select at least one video.")
 
