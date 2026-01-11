@@ -97,6 +97,9 @@ def process_pair(video_paths, audio_path, config_overrides, progress_callback=No
     else:
         video_paths = [str(p) for p in video_paths]
     
+    # Use the first video in the list as the base for the output filename.
+    base_name_source_path = video_paths[0]
+
     audio_path = str(audio_path) if audio_path else None
 
     # Handle concatenation if multiple videos provided
@@ -111,7 +114,7 @@ def process_pair(video_paths, audio_path, config_overrides, progress_callback=No
     else:
         video_path = video_paths[0]
 
-    update_status(f"Processing: {os.path.basename(video_path)}")
+    update_status(f"Processing: {os.path.basename(base_name_source_path)}")
     print(f"\n=======================================================")
     print(f"Processing Video: {video_path}")
     print(f"Processing Audio: {audio_path if audio_path else 'None (using video audio only)'}")
@@ -174,7 +177,7 @@ def process_pair(video_paths, audio_path, config_overrides, progress_callback=No
     # --- Step 3: Process with FFMPEG ---
     for i, (start_time, end_time) in enumerate(performance_segments):
         duration = end_time - start_time
-        base_name = os.path.splitext(os.path.basename(video_path))[0]
+        base_name = os.path.splitext(os.path.basename(base_name_source_path))[0]
         output_filename = os.path.join(config['output_dir'], f"{base_name}_performance_{i+1}.mp4")
 
         update_status(f"Encoding segment {i+1} of {os.path.basename(video_path)}...")

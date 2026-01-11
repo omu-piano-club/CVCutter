@@ -30,7 +30,7 @@ logger = logging.getLogger(__name__)
 
 def get_video_files_sorted(video_dir: Path) -> List[Dict]:
     """
-    動画ファイルを作成時刻順にソート
+    動画ファイルをファイル名順にソート
 
     Args:
         video_dir: 動画ファイルのディレクトリ
@@ -44,8 +44,8 @@ def get_video_files_sorted(video_dir: Path) -> List[Dict]:
         if f.is_file() and f.suffix.lower() in video_extensions
     ]
 
-    # 作成時刻でソート（古い順）
-    video_files.sort(key=lambda f: f.stat().st_ctime)
+    # ファイル名でソート
+    video_files.sort(key=lambda f: f.name)
 
     video_info_list = []
     for i, video_file in enumerate(video_files, 1):

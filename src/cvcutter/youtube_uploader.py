@@ -226,15 +226,15 @@ def authenticate(client_secrets_path: Optional[Path] = None) -> object:
     return build(API_SERVICE_NAME, API_VERSION, credentials=credentials, static_discovery=False)
 
 
-def get_video_files_sorted_by_time(directory: Path) -> List[Path]:
+def get_video_files_sorted_by_name(directory: Path) -> List[Path]:
     """
-    指定ディレクトリ内の動画ファイルを作成時刻順にソート
+    指定ディレクトリ内の動画ファイルをファイル名順にソート
 
     Args:
         directory: 動画ファイルのディレクトリ
 
     Returns:
-        作成時刻順にソートされた動画ファイルパスのリスト
+        ファイル名順にソートされた動画ファイルパスのリスト
     """
     video_extensions = ['.mp4', '.avi', '.mov', '.mkv', '.flv', '.wmv']
     video_files = [
@@ -242,8 +242,8 @@ def get_video_files_sorted_by_time(directory: Path) -> List[Path]:
         if f.is_file() and f.suffix.lower() in video_extensions
     ]
 
-    # 作成時刻でソート（古い順）
-    video_files.sort(key=lambda f: f.stat().st_ctime)
+    # ファイル名でソート
+    video_files.sort(key=lambda f: f.name)
 
     logger.info(f"{len(video_files)}個の動画ファイルを検出しました")
     for i, video_file in enumerate(video_files, 1):
@@ -456,7 +456,7 @@ def batch_upload(video_dir: Path, metadata_file: Path,
     quota_manager = QuotaManager()
 
     # 動画ファイルの取得（作成時刻順）
-    video_files = get_video_files_sorted_by_time(video_dir)
+    video_files = get_video_files_sorted_by_name(video_dir)
 
     if not video_files:
         logger.warning("アップロードする動画ファイルが見つかりません")
