@@ -130,8 +130,8 @@ def process_pair(video_paths, audio_path, config_overrides, progress_callback=No
         'audio_sync_sample_rate': 22050,
         'use_gpu': True,
         'detection_config': { 'max_seconds_to_process': None, 'min_duration_seconds': 30, 'show_video': False,
-                              'mog2_threshold': 40, 'min_contour_area': 3000, 'left_zone_end_percent': 0.25,
-                              'center_zone_end_percent': 0.55 }
+                              'mog2_threshold': 40, 'min_contour_area': 3000, 'left_zone_end_percent': 0.15,
+                              'center_zone_end_percent': 0.65 } # 誤検知減少のためここを変更すべし
     }
     config.update(config_overrides)
 
