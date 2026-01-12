@@ -14,12 +14,12 @@ from datetime import datetime
 # Logic imports
 from .config_manager import ConfigManager
 from . import video_processor
-from .run_youtube_workflow import run_full_workflow
 from .create_google_form import create_concert_form, authenticate_forms_api, save_form_config, load_form_history
-from .video_mapper import get_video_files_sorted, map_program_to_videos, map_with_form_responses
+from .video_mapper import get_video_files_sorted, map_program_to_videos, map_with_form_responses, generate_upload_metadata
 from .google_form_connector import FormResponseParser
 from .pdf_parser import parse_concert_pdf
 from .gemini_utils import configure_gemini
+from . import youtube_uploader
 
 # --- Console Redirector ---
 class ConsoleRedirector:
@@ -65,6 +65,7 @@ class ConcertVideoApp(ctk.CTk):
         self.mapping_results = []
         self.v_checkboxes = []
         self.a_checkboxes = []
+        self.program_data = None # To store parsed PDF data
 
         # Layout
         self.grid_columnconfigure(1, weight=1)
@@ -648,17 +649,18 @@ Google API の無料枠には、1日あたりのアップロード数に制限�
             try:
                 secrets = self.secrets_var.get()
                 # 1. PDF
-                program_data = parse_concert_pdf(Path(pdf))
+                self.program_data = parse_concert_pdf(Path(pdf))
                 # 2. Form
                 parser = FormResponseParser()
                 form_resps = parser.load_from_forms_api(form_id if form_id else None)
                 # 3. Videos in output
                 video_infos = get_video_files_sorted(Path(self.config['paths']['output_dir']))
                 # 4. Map
-                p_v_map = map_program_to_videos(program_data, video_infos)
+                p_v_map = map_program_to_videos(self.program_data, video_infos)
                 self.mapping_results = map_with_form_responses(p_v_map, form_resps, use_gemini=True)
                 
                 self.after(0, self._update_preview_ui)
+                self.after(0, self._generate_and_save_metadata)
                 print("--- マッピング解析完了 ---")
             except Exception as e:
                 print(f"マッピングエラー: {e}")
@@ -683,30 +685,73 @@ Google API の無料枠には、1日あたりのアップロード数に制限�
 
             edit_btn = ctk.CTkButton(frame, text="編集", width=60, command=lambda m=m: self._edit_mapping(m))
             edit_btn.grid(row=0, column=2, rowspan=2, padx=10)
-
-    def _run_workflow(self):
-        pdf = self.pdf_var.get()
-        if not pdf:
-            messagebox.showerror("Error", "PDF path is required.")
-            return
-
-        def task():
+    
+        def _generate_and_save_metadata(self):
+            """mapping_resultsからメタデータを生成し、ファイルに保存する"""
+            if not self.mapping_results:
+                print("マッピング結果がありません。メタデータを生成できません。")
+                return
+    
+            print("--- アップロード用メタデータを生成・保存します ---")
             try:
-                # Need to capture results to display
-                # For now, we'll look at upload_metadata.json which is generated during workflow
-                run_full_workflow(
-                    pdf_path=Path(pdf),
-                    form_id=self.form_id_var.get(),
-                    video_dir=Path(self.config['paths']['output_dir']),
-                    skip_upload=self.skip_upload_var.get()
-                )
+                # _run_mappingで保存したprogram_dataを使用
+                concert_info = self.program_data.get("concert_info") if self.program_data else None
+                metadata = generate_upload_metadata(self.mapping_results, concert_info)
+    
+                metadata_path = Path(self.config['paths']['output_dir']) / "upload_metadata.json"
+                with open(metadata_path, 'w', encoding='utf-8') as f:
+                    json.dump(metadata, f, ensure_ascii=False, indent=2)
+                print(f"✓ メタデータを保存しました: {metadata_path}")
                 
+                # アップロードタブの表示も更新
                 self.after(0, self._display_upload_results)
-                self.after(0, lambda: messagebox.showinfo("完了", "ワークフローが完了しました！"))
+    
             except Exception as e:
-                print(f"ワークフローエラー: {e}")
-
-        threading.Thread(target=task).start()
+                print(f"メタデータの生成・保存中にエラーが発生しました: {e}")
+                self.after(0, lambda: messagebox.showerror("エラー", f"メタデータの生成に失敗しました:\n{e}"))
+    
+        def _run_workflow(self):
+            """保存されたメタデータを使ってアップロード処理を実行する"""
+            output_dir = Path(self.config['paths']['output_dir'])
+            metadata_path = output_dir / "upload_metadata.json"
+    
+            if not metadata_path.exists():
+                messagebox.showerror("エラー", "アップロードメタデータファイル (upload_metadata.json) が見つかりません。\n先に「2. プレビュー & 紐付け」タブでマッピングを生成してください。")
+                return
+    
+            if self.skip_upload_var.get():
+                messagebox.showinfo("スキップ", "アップロードはスキップされました。メタデータは準備完了です。")
+                self._display_upload_results() # Just display the existing file
+                return
+    
+            secrets_path_str = self.secrets_var.get()
+            if not secrets_path_str or not os.path.exists(secrets_path_str):
+                 messagebox.showerror("エラー", "Client Secrets JSONファイルが見つかりません。「設定」タブで正しいファイルを指定してください。")
+                 return
+            secrets_path = Path(secrets_path_str)
+    
+            def task():
+                try:
+                    print("--- YouTubeアップロード処理を開始します ---")
+                    updated_metadata, summary = youtube_uploader.batch_upload(
+                        video_dir=output_dir,
+                        metadata_file=metadata_path,
+                        client_secrets_path=secrets_path
+                    )
+    
+                    # アップローダーが返したURL情報などを含む最新のメタデータを保存
+                    with open(metadata_path, 'w', encoding='utf-8') as f:
+                        json.dump(updated_metadata, f, ensure_ascii=False, indent=2)
+    
+                    print(f"--- アップロード処理完了: {summary.get('success', 0)}件成功 ---")
+                    self.after(0, self._display_upload_results)
+                    self.after(0, lambda: messagebox.showinfo("完了", "アップロード処理が完了しました！"))
+    
+                except Exception as e:
+                    print(f"アップロードワークフローエラー: {e}")
+                    self.after(0, lambda err=e: messagebox.showerror("エラー", f"アップロード処理に失敗しました:\n{err}"))
+    
+            threading.Thread(target=task).start()
 
     def _display_upload_results(self):
         for widget in self.upload_result_area.winfo_children():
@@ -836,6 +881,8 @@ Google API の無料枠には、1日あたりのアップロード数に制限�
         
         # Refresh the UI to show the change
         self._update_preview_ui()
+        # 変更をメタデータファイルに即時反映
+        self._generate_and_save_metadata()
 
     def _update_form_history(self):
         # 既存のウィジェットをクリア

@@ -432,6 +432,7 @@ def add_video_to_playlist(youtube, video_id: str, playlist_id: str):
 
 
 def batch_upload(video_dir: Path, metadata_file: Path,
+                 client_secrets_path: Optional[Path] = None,
                  confirm_callback=None) -> Tuple[Dict, Dict]:
     """
     複数の動画をバッチアップロード
@@ -439,6 +440,7 @@ def batch_upload(video_dir: Path, metadata_file: Path,
     Args:
         video_dir: 動画ファイルのディレクトリ
         metadata_file: メタデータJSONファイル
+        client_secrets_path: client_secrets.jsonのパス（オプション）
         confirm_callback: ユーザー確認用コールバック関数 (video_files, metadata) -> bool
 
     Returns:
@@ -450,7 +452,7 @@ def batch_upload(video_dir: Path, metadata_file: Path,
 
     # 認証
     logger.info("YouTube APIに接続しています...")
-    youtube = authenticate()
+    youtube = authenticate(client_secrets_path=client_secrets_path)
 
     # クォータマネージャーの初期化
     quota_manager = QuotaManager()
