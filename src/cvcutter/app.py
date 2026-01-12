@@ -686,72 +686,72 @@ Google API の無料枠には、1日あたりのアップロード数に制限�
             edit_btn = ctk.CTkButton(frame, text="編集", width=60, command=lambda m=m: self._edit_mapping(m))
             edit_btn.grid(row=0, column=2, rowspan=2, padx=10)
     
-        def _generate_and_save_metadata(self):
-            """mapping_resultsからメタデータを生成し、ファイルに保存する"""
-            if not self.mapping_results:
-                print("マッピング結果がありません。メタデータを生成できません。")
-                return
-    
-            print("--- アップロード用メタデータを生成・保存します ---")
+    def _generate_and_save_metadata(self):
+        """mapping_resultsからメタデータを生成し、ファイルに保存する"""
+        if not self.mapping_results:
+            print("マッピング結果がありません。メタデータを生成できません。")
+            return
+
+        print("--- アップロード用メタデータを生成・保存します ---")
+        try:
+            # _run_mappingで保存したprogram_dataを使用
+            concert_info = self.program_data.get("concert_info") if self.program_data else None
+            metadata = generate_upload_metadata(self.mapping_results, concert_info)
+
+            metadata_path = Path(self.config['paths']['output_dir']) / "upload_metadata.json"
+            with open(metadata_path, 'w', encoding='utf-8') as f:
+                json.dump(metadata, f, ensure_ascii=False, indent=2)
+            print(f"✓ メタデータを保存しました: {metadata_path}")
+            
+            # アップロードタブの表示も更新
+            self.after(0, self._display_upload_results)
+
+        except Exception as e:
+            print(f"メタデータの生成・保存中にエラーが発生しました: {e}")
+            self.after(0, lambda: messagebox.showerror("エラー", f"メタデータの生成に失敗しました:\n{e}"))
+
+    def _run_workflow(self):
+        """保存されたメタデータを使ってアップロード処理を実行する"""
+        output_dir = Path(self.config['paths']['output_dir'])
+        metadata_path = output_dir / "upload_metadata.json"
+
+        if not metadata_path.exists():
+            messagebox.showerror("エラー", "アップロードメタデータファイル (upload_metadata.json) が見つかりません。\n先に「2. プレビュー & 紐付け」タブでマッピングを生成してください。")
+            return
+
+        if self.skip_upload_var.get():
+            messagebox.showinfo("スキップ", "アップロードはスキップされました。メタデータは準備完了です。")
+            self._display_upload_results() # Just display the existing file
+            return
+
+        secrets_path_str = self.secrets_var.get()
+        if not secrets_path_str or not os.path.exists(secrets_path_str):
+             messagebox.showerror("エラー", "Client Secrets JSONファイルが見つかりません。「設定」タブで正しいファイルを指定してください。")
+             return
+        secrets_path = Path(secrets_path_str)
+
+        def task():
             try:
-                # _run_mappingで保存したprogram_dataを使用
-                concert_info = self.program_data.get("concert_info") if self.program_data else None
-                metadata = generate_upload_metadata(self.mapping_results, concert_info)
-    
-                metadata_path = Path(self.config['paths']['output_dir']) / "upload_metadata.json"
+                print("--- YouTubeアップロード処理を開始します ---")
+                updated_metadata, summary = youtube_uploader.batch_upload(
+                    video_dir=output_dir,
+                    metadata_file=metadata_path,
+                    client_secrets_path=secrets_path
+                )
+
+                # アップローダーが返したURL情報などを含む最新のメタデータを保存
                 with open(metadata_path, 'w', encoding='utf-8') as f:
-                    json.dump(metadata, f, ensure_ascii=False, indent=2)
-                print(f"✓ メタデータを保存しました: {metadata_path}")
-                
-                # アップロードタブの表示も更新
+                    json.dump(updated_metadata, f, ensure_ascii=False, indent=2)
+
+                print(f"--- アップロード処理完了: {summary.get('success', 0)}件成功 ---")
                 self.after(0, self._display_upload_results)
-    
+                self.after(0, lambda: messagebox.showinfo("完了", "アップロード処理が完了しました！"))
+
             except Exception as e:
-                print(f"メタデータの生成・保存中にエラーが発生しました: {e}")
-                self.after(0, lambda: messagebox.showerror("エラー", f"メタデータの生成に失敗しました:\n{e}"))
-    
-        def _run_workflow(self):
-            """保存されたメタデータを使ってアップロード処理を実行する"""
-            output_dir = Path(self.config['paths']['output_dir'])
-            metadata_path = output_dir / "upload_metadata.json"
-    
-            if not metadata_path.exists():
-                messagebox.showerror("エラー", "アップロードメタデータファイル (upload_metadata.json) が見つかりません。\n先に「2. プレビュー & 紐付け」タブでマッピングを生成してください。")
-                return
-    
-            if self.skip_upload_var.get():
-                messagebox.showinfo("スキップ", "アップロードはスキップされました。メタデータは準備完了です。")
-                self._display_upload_results() # Just display the existing file
-                return
-    
-            secrets_path_str = self.secrets_var.get()
-            if not secrets_path_str or not os.path.exists(secrets_path_str):
-                 messagebox.showerror("エラー", "Client Secrets JSONファイルが見つかりません。「設定」タブで正しいファイルを指定してください。")
-                 return
-            secrets_path = Path(secrets_path_str)
-    
-            def task():
-                try:
-                    print("--- YouTubeアップロード処理を開始します ---")
-                    updated_metadata, summary = youtube_uploader.batch_upload(
-                        video_dir=output_dir,
-                        metadata_file=metadata_path,
-                        client_secrets_path=secrets_path
-                    )
-    
-                    # アップローダーが返したURL情報などを含む最新のメタデータを保存
-                    with open(metadata_path, 'w', encoding='utf-8') as f:
-                        json.dump(updated_metadata, f, ensure_ascii=False, indent=2)
-    
-                    print(f"--- アップロード処理完了: {summary.get('success', 0)}件成功 ---")
-                    self.after(0, self._display_upload_results)
-                    self.after(0, lambda: messagebox.showinfo("完了", "アップロード処理が完了しました！"))
-    
-                except Exception as e:
-                    print(f"アップロードワークフローエラー: {e}")
-                    self.after(0, lambda err=e: messagebox.showerror("エラー", f"アップロード処理に失敗しました:\n{err}"))
-    
-            threading.Thread(target=task).start()
+                print(f"アップロードワークフローエラー: {e}")
+                self.after(0, lambda err=e: messagebox.showerror("エラー", f"アップロード処理に失敗しました:\n{err}"))
+
+        threading.Thread(target=task).start()
 
     def _display_upload_results(self):
         for widget in self.upload_result_area.winfo_children():
