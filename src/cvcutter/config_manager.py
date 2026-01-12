@@ -41,7 +41,8 @@ DEFAULT_CONFIG = {
         "use_gemini": True,
         "skip_upload": False,
         "gemini_api_key": "",
-        "gemini_model": "gemini-2.5-flash"
+        "gemini_model": "gemini-2.5-flash",
+        "youtube_chunk_size": 5242880  # 5MB
     }
 }
 

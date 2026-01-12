@@ -281,6 +281,22 @@ class ConcertVideoApp(ctk.CTk):
             ("GPUアクセラレーション", "processing", "use_gpu", "bool")
         ])
 
+        # YouTube Upload Settings
+        upload_set_frame = ctk.CTkFrame(tab)
+        upload_set_frame.pack(fill=tk.X, padx=10, pady=10)
+        ctk.CTkLabel(upload_set_frame, text="YouTube アップロード設定", font=ctk.CTkFont(weight="bold")).pack(pady=5)
+        
+        row_chunk = ctk.CTkFrame(upload_set_frame, fg_color="transparent")
+        row_chunk.pack(fill=tk.X, padx=5, pady=2)
+        ctk.CTkLabel(row_chunk, text="アップロード チャンクサイズ (MB):", width=200, anchor="w").pack(side=tk.LEFT)
+        
+        # Convert bytes to MB for display
+        chunk_bytes = self.config['workflow'].get('youtube_chunk_size', 5242880)
+        chunk_mb = chunk_bytes / (1024 * 1024)
+        self.chunk_size_var = ctk.StringVar(value=f"{chunk_mb:.1f}")
+        ctk.CTkEntry(row_chunk, textvariable=self.chunk_size_var, width=100).pack(side=tk.LEFT)
+        ctk.CTkLabel(row_chunk, text="MB (推奨: 5.0 - 20.0)").pack(side=tk.LEFT, padx=5)
+
         # Gemini AI Auth
         gemini_frame = ctk.CTkFrame(tab)
         gemini_frame.pack(fill=tk.X, padx=10, pady=10)
@@ -570,6 +586,17 @@ Google API の無料枠には、1日あたりのアップロード数に制限�
         self.config_manager.set('workflow', 'gemini_api_key', self.gemini_key_var.get())
         self.config_manager.set('workflow', 'gemini_model', self.gemini_model_var.get())
         
+        # Save chunk size (convert MB back to bytes)
+        try:
+            mb_val = float(self.chunk_size_var.get())
+            bytes_val = int(mb_val * 1024 * 1024)
+            # YouTube API requires chunk size to be a multiple of 256KB
+            bytes_val = (bytes_val // (256 * 1024)) * (256 * 1024)
+            if bytes_val < 256 * 1024: bytes_val = 256 * 1024
+            self.config_manager.set('workflow', 'youtube_chunk_size', bytes_val)
+        except ValueError:
+            pass
+
         messagebox.showinfo("Settings", "Settings saved successfully.")
 
     def _create_form(self):
@@ -729,13 +756,16 @@ Google API の無料枠には、1日あたりのアップロード数に制限�
              messagebox.showerror("エラー", "Client Secrets JSONファイルが見つかりません。「設定」タブで正しいファイルを指定してください。")
              return
         secrets_path = Path(secrets_path_str)
+        chunk_size = self.config['workflow'].get('youtube_chunk_size', 1048576)
 
         def task():
             try:
                 print("--- YouTubeアップロード処理を開始します ---")
+                print(f"チャンクサイズ: {chunk_size / (1024*1024):.1f} MB")
                 updated_metadata, summary = youtube_uploader.batch_upload(
                     metadata_file=metadata_path,
-                    client_secrets_path=secrets_path
+                    client_secrets_path=secrets_path,
+                    chunk_size=chunk_size
                 )
 
                 # アップローダーが返したURL情報などを含む最新のメタデータを保存

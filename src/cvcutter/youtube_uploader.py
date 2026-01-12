@@ -70,6 +70,28 @@ RETRIABLE_EXCEPTIONS = (
 RETRIABLE_STATUS_CODES = [500, 502, 503, 504]
 
 
+class QuotaExceededError(Exception):
+    """YouTube APIのクォータ制限エラー"""
+    pass
+
+
+def is_quota_exceeded(error: HttpError) -> bool:
+    """HttpErrorがクォータ制限によるものか判定"""
+    if not isinstance(error, HttpError):
+        return False
+    
+    try:
+        content = json.loads(error.content.decode('utf-8'))
+        for err in content.get('error', {}).get('errors', []):
+            if err.get('reason') == 'quotaExceeded':
+                return True
+    except Exception:
+        pass
+    
+    # フォールバック: エラーメッセージにquotaの文字が含まれているか
+    return "quota" in str(error).lower()
+
+
 class QuotaManager:
     """YouTube API クォータ管理クラス"""
 
@@ -154,6 +176,11 @@ class QuotaManager:
     def increment_upload_count(self):
         """アップロードカウントをインクリメント"""
         self.state["uploads_today"] += 1
+        self._save_state()
+
+    def set_quota_exceeded(self):
+        """クォータ制限に達したことを記録"""
+        self.state["uploads_today"] = MAX_UPLOADS_PER_DAY
         self._save_state()
 
     def add_upload_history(self, file_path: str, video_id: Optional[str],
@@ -244,7 +271,7 @@ def load_upload_metadata(metadata_file: Path) -> Dict:
 
 
 def upload_video(youtube, video_file: Path, metadata: Dict,
-                retry_count: int = 0) -> Optional[str]:
+                retry_count: int = 0, chunk_size: int = 1048576) -> Optional[str]:
     """
     1本の動画をYouTubeにアップロード
 
@@ -253,6 +280,7 @@ def upload_video(youtube, video_file: Path, metadata: Dict,
         video_file: アップロードする動画ファイル
         metadata: 動画のメタデータ
         retry_count: リトライ回数
+        chunk_size: アップロードのチャンクサイズ（バイト）
 
     Returns:
         アップロードされた動画のvideo_id（失敗時はNone）
@@ -276,7 +304,7 @@ def upload_video(youtube, video_file: Path, metadata: Dict,
     # MediaFileUploadオブジェクトの作成
     media = MediaFileUpload(
         str(video_file),
-        chunksize=-1,  # 全ファイルを一度にアップロード
+        chunksize=chunk_size,
         resumable=True
     )
 
@@ -311,8 +339,12 @@ def upload_video(youtube, video_file: Path, metadata: Dict,
                         time.sleep(sleep_seconds)
                         return upload_video(youtube, video_file, metadata, retry_count + 1)
                     else:
+                        if is_quota_exceeded(e):
+                            raise QuotaExceededError(str(e))
                         raise
                 else:
+                    if is_quota_exceeded(e):
+                        raise QuotaExceededError(str(e))
                     raise
 
         video_id = response.get("id")
@@ -348,6 +380,8 @@ def upload_video(youtube, video_file: Path, metadata: Dict,
             raise
 
     except HttpError as e:
+        if is_quota_exceeded(e):
+            raise QuotaExceededError(str(e))
         logger.error(f"HTTPエラーが発生: {e}")
         raise
 
@@ -381,7 +415,8 @@ def add_video_to_playlist(youtube, video_id: str, playlist_id: str):
 
 def batch_upload(metadata_file: Path,
                  client_secrets_path: Optional[Path] = None,
-                 confirm_callback=None) -> Tuple[Dict, Dict]:
+                 confirm_callback=None,
+                 chunk_size: int = 1048576) -> Tuple[Dict, Dict]:
     """
     複数の動画をバッチアップロード
 
@@ -414,18 +449,29 @@ def batch_upload(metadata_file: Path,
         return metadata, quota_manager.get_upload_summary()
         
     # バッチアップロード実行
-    for i, video_metadata in enumerate(video_metadata_list, 1):
+    i = 0
+    while i < len(video_metadata_list):
+        video_metadata = video_metadata_list[i]
         video_path_str = video_metadata.get("file_path")
+        
         if not video_path_str:
-            logger.warning(f"メタデータ {i} に 'file_path' がありません。スキップします。")
+            logger.warning(f"メタデータ {i+1} に 'file_path' がありません。スキップします。")
+            i += 1
             continue
             
         video_file = Path(video_path_str)
         if not video_file.exists():
             logger.warning(f"動画ファイルが見つかりません: {video_file}。スキップします。")
+            i += 1
             continue
             
-        logger.info(f"\n[{i}/{len(video_metadata_list)}] {video_file.name}")
+        # 既にアップロード済みの場合はスキップ（video_idがある場合）
+        if video_metadata.get("video_id"):
+            logger.info(f"スキップ（アップロード済み）: {video_file.name}")
+            i += 1
+            continue
+
+        logger.info(f"\n[{i+1}/{len(video_metadata_list)}] {video_file.name}")
         logger.info(f"タイトル: {video_metadata.get('title')}")
 
         # クォータチェック
@@ -435,11 +481,19 @@ def batch_upload(metadata_file: Path,
         # アップロード実行
         try:
             # upload_videoがvideo_metadataを更新する
-            video_id = upload_video(youtube, video_file, video_metadata)
+            video_id = upload_video(youtube, video_file, video_metadata, chunk_size=chunk_size)
             quota_manager.add_upload_history(
                 str(video_file), video_id, "success"
             )
             quota_manager.increment_upload_count()
+            i += 1 # 成功したら次へ
+
+        except QuotaExceededError:
+            logger.warning("APIからクォータ制限エラーを受け取りました。")
+            quota_manager.set_quota_exceeded()
+            quota_manager.wait_for_quota_reset()
+            # リセット待機後、インデックス i は進めずにループを継続（再試行）
+            continue
 
         except Exception as e:
             error_msg = str(e)
@@ -448,7 +502,8 @@ def batch_upload(metadata_file: Path,
             quota_manager.add_upload_history(
                 str(video_file), None, "failed", error_msg
             )
-            # 失敗した動画はスキップして続行
+            # 致命的なエラーや不明なエラーはスキップして次へ
+            i += 1
             continue
 
     # 結果サマリー
