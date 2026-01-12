@@ -734,7 +734,6 @@ Google API の無料枠には、1日あたりのアップロード数に制限�
             try:
                 print("--- YouTubeアップロード処理を開始します ---")
                 updated_metadata, summary = youtube_uploader.batch_upload(
-                    video_dir=output_dir,
                     metadata_file=metadata_path,
                     client_secrets_path=secrets_path
                 )

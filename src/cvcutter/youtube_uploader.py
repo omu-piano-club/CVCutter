@@ -226,33 +226,6 @@ def authenticate(client_secrets_path: Optional[Path] = None) -> object:
     return build(API_SERVICE_NAME, API_VERSION, credentials=credentials, static_discovery=False)
 
 
-def get_video_files_sorted_by_name(directory: Path) -> List[Path]:
-    """
-    指定ディレクトリ内の動画ファイルをファイル名順にソート
-
-    Args:
-        directory: 動画ファイルのディレクトリ
-
-    Returns:
-        ファイル名順にソートされた動画ファイルパスのリスト
-    """
-    video_extensions = ['.mp4', '.avi', '.mov', '.mkv', '.flv', '.wmv']
-    video_files = [
-        f for f in directory.iterdir()
-        if f.is_file() and f.suffix.lower() in video_extensions
-    ]
-
-    # ファイル名でソート
-    video_files.sort(key=lambda f: f.name)
-
-    logger.info(f"{len(video_files)}個の動画ファイルを検出しました")
-    for i, video_file in enumerate(video_files, 1):
-        ctime = datetime.fromtimestamp(video_file.stat().st_ctime)
-        logger.info(f"  {i}. {video_file.name} (作成: {ctime})")
-
-    return video_files
-
-
 def load_upload_metadata(metadata_file: Path) -> Dict:
     """
     アップロードメタデータファイルを読み込み
@@ -268,31 +241,6 @@ def load_upload_metadata(metadata_file: Path) -> Dict:
 
     with open(metadata_file, 'r', encoding='utf-8') as f:
         return json.load(f)
-
-
-def validate_metadata_mapping(video_files: List[Path], metadata: Dict) -> Tuple[bool, str]:
-    """
-    動画ファイルとメタデータのマッピングを検証
-
-    Args:
-        video_files: 動画ファイルリスト
-        metadata: メタデータ辞書
-
-    Returns:
-        (検証成功フラグ, エラーメッセージ)
-    """
-    video_count = len(video_files)
-    metadata_count = len(metadata.get("videos", []))
-
-    if video_count != metadata_count:
-        error_msg = (
-            f"動画ファイル数（{video_count}本）とメタデータ数（{metadata_count}件）が一致しません。\n"
-            f"動画ファイル: {[f.name for f in video_files]}\n"
-            f"メタデータ: {[m.get('title', '無題') for m in metadata.get('videos', [])]}"
-        )
-        return False, error_msg
-
-    return True, ""
 
 
 def upload_video(youtube, video_file: Path, metadata: Dict,
@@ -431,14 +379,13 @@ def add_video_to_playlist(youtube, video_id: str, playlist_id: str):
     ).execute()
 
 
-def batch_upload(video_dir: Path, metadata_file: Path,
+def batch_upload(metadata_file: Path,
                  client_secrets_path: Optional[Path] = None,
                  confirm_callback=None) -> Tuple[Dict, Dict]:
     """
     複数の動画をバッチアップロード
 
     Args:
-        video_dir: 動画ファイルのディレクトリ
         metadata_file: メタデータJSONファイル
         client_secrets_path: client_secrets.jsonのパス（オプション）
         confirm_callback: ユーザー確認用コールバック関数 (video_files, metadata) -> bool
@@ -457,41 +404,28 @@ def batch_upload(video_dir: Path, metadata_file: Path,
     # クォータマネージャーの初期化
     quota_manager = QuotaManager()
 
-    # 動画ファイルの取得（作成時刻順）
-    video_files = get_video_files_sorted_by_name(video_dir)
-
-    if not video_files:
-        logger.warning("アップロードする動画ファイルが見つかりません")
-        return metadata, quota_manager.get_upload_summary()
-
     # メタデータの読み込み
     logger.info(f"メタデータを読み込んでいます: {metadata_file}")
     metadata = load_upload_metadata(metadata_file)
-
-    # マッピングの検証
-    is_valid, error_msg = validate_metadata_mapping(video_files, metadata)
-
-    if not is_valid:
-        logger.error(error_msg)
-        # ユーザー確認が必要
-        if confirm_callback:
-            if not confirm_callback(video_files, metadata, error_msg):
-                logger.info("ユーザーによりアップロードがキャンセルされました")
-                return metadata, quota_manager.get_upload_summary()
-        else:
-            raise ValueError(error_msg)
-
-    # 最終確認（エラーがない場合も確認）
-    if confirm_callback:
-        if not confirm_callback(video_files, metadata, None):
-            logger.info("ユーザーによりアップロードがキャンセルされました")
-            return metadata, quota_manager.get_upload_summary()
-
-    # バッチアップロード実行
     video_metadata_list = metadata.get("videos", [])
 
-    for i, (video_file, video_metadata) in enumerate(zip(video_files, video_metadata_list), 1):
-        logger.info(f"\n[{i}/{len(video_files)}] {video_file.name}")
+    if not video_metadata_list:
+        logger.warning("アップロード対象の動画がメタデータ内に見つかりません。")
+        return metadata, quota_manager.get_upload_summary()
+        
+    # バッチアップロード実行
+    for i, video_metadata in enumerate(video_metadata_list, 1):
+        video_path_str = video_metadata.get("file_path")
+        if not video_path_str:
+            logger.warning(f"メタデータ {i} に 'file_path' がありません。スキップします。")
+            continue
+            
+        video_file = Path(video_path_str)
+        if not video_file.exists():
+            logger.warning(f"動画ファイルが見つかりません: {video_file}。スキップします。")
+            continue
+            
+        logger.info(f"\n[{i}/{len(video_metadata_list)}] {video_file.name}")
         logger.info(f"タイトル: {video_metadata.get('title')}")
 
         # クォータチェック
@@ -539,12 +473,6 @@ def main():
         description="YouTube動画バッチアップロードツール"
     )
     parser.add_argument(
-        "--video-dir",
-        type=Path,
-        default=Path(__file__).parent / "output",
-        help="動画ファイルのディレクトリ（デフォルト: output/）"
-    )
-    parser.add_argument(
         "--metadata",
         type=Path,
         default=Path(__file__).parent / "upload_metadata.json",
@@ -554,7 +482,7 @@ def main():
     args = parser.parse_args()
 
     try:
-        _, summary = batch_upload(args.video_dir, args.metadata)
+        _, summary = batch_upload(args.metadata)
 
         if summary['failed'] > 0:
             sys.exit(1)

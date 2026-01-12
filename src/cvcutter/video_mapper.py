@@ -341,7 +341,8 @@ def generate_upload_metadata(mappings: List[Dict], concert_info: Optional[Dict] 
             "description": description[:5000],  # 最大5000バイト
             "tags": tags,
             "privacy_status": form_resp.get("privacy", "unlisted"),
-            "playlist_id": ""
+            "playlist_id": "",
+            "file_path": mapping.get("video_file")
         }
 
         videos.append(video_metadata)
